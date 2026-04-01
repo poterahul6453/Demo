@@ -1,0 +1,1090 @@
+"""
+_initdb.py — Guest House Management System
+==========================================
+Complete database schema initialization script.
+
+Usage:
+    python _initdb.py                        # create all tables
+    python _initdb.py --drop                 # drop and recreate everything
+    python _initdb.py --seed                 # create tables + insert seed data
+    python _initdb.py --drop --seed          # full reset with seed data
+    python _initdb.py --verify               # verify all tables exist
+
+Requirements:
+    pip install psycopg2-binary python-dotenv
+
+Environment variables (.env):
+    DB_HOST=localhost
+    DB_PORT=5432
+    DB_NAME=guesthouse_db
+    DB_USER=postgres
+    DB_PASSWORD=yourpassword
+"""
+
+import os
+import sys
+import uuid
+import hashlib
+import argparse
+import logging
+from datetime import datetime, timezone
+
+try:
+    import psycopg2
+    from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+except ImportError:
+    print("ERROR: psycopg2 not installed. Run: pip install psycopg2-binary")
+    sys.exit(1)
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # .env optional; fall back to environment variables
+
+# ─────────────────────────────────────────────
+# Logging
+# ─────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-8s  %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+log = logging.getLogger("initdb")
+
+
+# ─────────────────────────────────────────────
+# Connection
+# ─────────────────────────────────────────────
+def get_connection():
+    return psycopg2.connect(
+        host=os.getenv("DB_HOST", "localhost"),
+        port=int(os.getenv("DB_PORT", 5432)),
+        dbname=os.getenv("DB_NAME", "guesthouse_db"),
+        user=os.getenv("DB_USER", "postgres"),
+        password=os.getenv("DB_PASSWORD", ""),
+    )
+
+
+# ─────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────
+def run(cursor, sql, label=""):
+    try:
+        cursor.execute(sql)
+        if label:
+            log.info(f"  OK  {label}")
+    except Exception as e:
+        log.error(f"FAIL {label}: {e}")
+        raise
+
+
+def hash_password(plain: str) -> str:
+    """SHA-256 placeholder — replace with bcrypt in production."""
+    return hashlib.sha256(plain.encode()).hexdigest()
+
+
+# ═══════════════════════════════════════════════════════════════
+# SCHEMA: EXTENSIONS
+# ═══════════════════════════════════════════════════════════════
+EXTENSIONS_SQL = """
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+"""
+
+
+# ═══════════════════════════════════════════════════════════════
+# SCHEMA: ENUMS
+# ═══════════════════════════════════════════════════════════════
+ENUMS_SQL = """
+DO $$ BEGIN
+
+    -- User roles
+    CREATE TYPE user_role AS ENUM ('admin', 'manager', 'employee');
+    EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    -- Manager assignment type
+    CREATE TYPE manager_role AS ENUM ('primary', 'backup');
+    EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    -- Room types
+    CREATE TYPE room_type AS ENUM ('single', 'double', 'suite');
+    EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    -- Room statuses — full state machine from workflow
+    CREATE TYPE room_status AS ENUM (
+        'available',
+        'held',
+        'reserved_pending',
+        'reserved_confirmed',
+        'occupied',
+        'cleaning',
+        'maintenance'
+    );
+    EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    -- Booking statuses
+    CREATE TYPE booking_status AS ENUM (
+        'pending',
+        'confirmed',
+        'rejected',
+        'cancelled',
+        'checked_in',
+        'checked_out',
+        'no_show'
+    );
+    EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    -- Notification types
+    CREATE TYPE notification_type AS ENUM (
+        'booking_request',
+        'booking_approved',
+        'booking_rejected',
+        'booking_cancelled',
+        'hold_expiring',
+        'check_in_reminder',
+        'no_show_alert',
+        'escalation',
+        'cleaning_overdue',
+        'waitlist_available',
+        'maintenance_alert'
+    );
+    EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    -- Notification delivery channels
+    CREATE TYPE notification_channel AS ENUM ('in_app', 'email', 'sms');
+    EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    -- Audit log action types
+    CREATE TYPE audit_action AS ENUM (
+        'create', 'update', 'delete',
+        'login', 'logout', 'login_failed',
+        'approve', 'reject', 'cancel',
+        'check_in', 'check_out',
+        'hold_created', 'hold_released', 'hold_expired',
+        'escalate', 'permission_denied'
+    );
+    EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+"""
+
+
+# ═══════════════════════════════════════════════════════════════
+# TABLE 1: users
+# ═══════════════════════════════════════════════════════════════
+USERS_SQL = """
+CREATE TABLE IF NOT EXISTS users (
+    id                  UUID            PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name                VARCHAR(120)    NOT NULL,
+    email               VARCHAR(200)    NOT NULL UNIQUE,
+    password_hash       TEXT            NOT NULL,
+    phone               VARCHAR(20),
+    role                user_role       NOT NULL DEFAULT 'employee',
+
+    -- MFA
+    mfa_enabled         BOOLEAN         NOT NULL DEFAULT FALSE,
+    mfa_secret          TEXT,                                       -- TOTP secret (encrypted at rest)
+
+    -- Account state
+    is_active           BOOLEAN         NOT NULL DEFAULT TRUE,
+    failed_login_count  SMALLINT        NOT NULL DEFAULT 0,
+    locked_until        TIMESTAMPTZ,                                -- set on 5th failed attempt
+
+    -- Refresh token management
+    refresh_token_hash  TEXT,
+    token_issued_at     TIMESTAMPTZ,
+
+    -- Password reset
+    reset_token_hash    TEXT,
+    reset_token_expiry  TIMESTAMPTZ,
+
+    -- Preferences
+    sms_enabled         BOOLEAN         NOT NULL DEFAULT FALSE,
+    department          VARCHAR(100),
+    employee_code       VARCHAR(50)     UNIQUE,
+
+    created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_email    ON users (email);
+CREATE INDEX IF NOT EXISTS idx_users_role     ON users (role);
+CREATE INDEX IF NOT EXISTS idx_users_active   ON users (is_active);
+"""
+
+
+# ═══════════════════════════════════════════════════════════════
+# TABLE 2: locations
+# ═══════════════════════════════════════════════════════════════
+LOCATIONS_SQL = """
+CREATE TABLE IF NOT EXISTS locations (
+    id          UUID            PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name        VARCHAR(120)    NOT NULL,
+    city        VARCHAR(100)    NOT NULL,
+    state       VARCHAR(100)    NOT NULL,
+    country     VARCHAR(100)    NOT NULL DEFAULT 'India',
+    is_active   BOOLEAN         NOT NULL DEFAULT TRUE,
+    created_by  UUID            REFERENCES users (id) ON DELETE SET NULL,
+    created_at  TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_locations_active ON locations (is_active);
+"""
+
+
+# ═══════════════════════════════════════════════════════════════
+# TABLE 3: guest_houses
+# ═══════════════════════════════════════════════════════════════
+GUEST_HOUSES_SQL = """
+CREATE TABLE IF NOT EXISTS guest_houses (
+    id              UUID            PRIMARY KEY DEFAULT uuid_generate_v4(),
+    location_id     UUID            NOT NULL REFERENCES locations (id) ON DELETE RESTRICT,
+    name            VARCHAR(150)    NOT NULL,
+    address         TEXT,
+    contact_phone   VARCHAR(20),
+    contact_email   VARCHAR(200),
+    total_rooms     SMALLINT        NOT NULL DEFAULT 0,             -- denormalized, updated by trigger
+    is_active       BOOLEAN         NOT NULL DEFAULT TRUE,
+    deactivated_at  TIMESTAMPTZ,                                    -- set when Admin deactivates
+    deactivated_by  UUID            REFERENCES users (id) ON DELETE SET NULL,
+    created_by      UUID            REFERENCES users (id) ON DELETE SET NULL,
+    created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_gh_location    ON guest_houses (location_id);
+CREATE INDEX IF NOT EXISTS idx_gh_active      ON guest_houses (is_active);
+"""
+
+
+# ═══════════════════════════════════════════════════════════════
+# TABLE 4: guest_house_managers
+# Junction table — one manager can cover multiple houses;
+# each house has one primary + optional backups.
+# ═══════════════════════════════════════════════════════════════
+GUEST_HOUSE_MANAGERS_SQL = """
+CREATE TABLE IF NOT EXISTS guest_house_managers (
+    id              UUID            PRIMARY KEY DEFAULT uuid_generate_v4(),
+    guest_house_id  UUID            NOT NULL REFERENCES guest_houses (id) ON DELETE CASCADE,
+    user_id         UUID            NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    role            manager_role    NOT NULL DEFAULT 'primary',
+    is_active       BOOLEAN         NOT NULL DEFAULT TRUE,
+    assigned_by     UUID            REFERENCES users (id) ON DELETE SET NULL,
+    assigned_at     TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    removed_at      TIMESTAMPTZ,
+
+    -- Only one primary manager per guest house
+    CONSTRAINT uq_one_primary_per_gh EXCLUDE USING btree (
+        guest_house_id WITH =,
+        role WITH =
+    ) WHERE (role = 'primary' AND is_active = TRUE)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ghm_gh     ON guest_house_managers (guest_house_id);
+CREATE INDEX IF NOT EXISTS idx_ghm_user   ON guest_house_managers (user_id);
+CREATE INDEX IF NOT EXISTS idx_ghm_active ON guest_house_managers (is_active);
+"""
+
+
+# ═══════════════════════════════════════════════════════════════
+# TABLE 5: rooms
+# ═══════════════════════════════════════════════════════════════
+ROOMS_SQL = """
+CREATE TABLE IF NOT EXISTS rooms (
+    id              UUID            PRIMARY KEY DEFAULT uuid_generate_v4(),
+    guest_house_id  UUID            NOT NULL REFERENCES guest_houses (id) ON DELETE CASCADE,
+    room_number     VARCHAR(20)     NOT NULL,
+    floor           SMALLINT        NOT NULL DEFAULT 1,
+    type            room_type       NOT NULL DEFAULT 'single',
+    status          room_status     NOT NULL DEFAULT 'available',
+
+    -- Amenities
+    has_ac          BOOLEAN         NOT NULL DEFAULT TRUE,
+    has_wifi        BOOLEAN         NOT NULL DEFAULT TRUE,
+    has_tv          BOOLEAN         NOT NULL DEFAULT FALSE,
+    max_occupancy   SMALLINT        NOT NULL DEFAULT 1,
+    description     TEXT,
+
+    -- Floor plan coordinates (for visual room grid in UI)
+    pos_x           SMALLINT,
+    pos_y           SMALLINT,
+
+    -- Maintenance tracking
+    last_maintenance_at TIMESTAMPTZ,
+    maintenance_note    TEXT,
+
+    created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT uq_room_number_per_gh UNIQUE (guest_house_id, room_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_rooms_gh         ON rooms (guest_house_id);
+CREATE INDEX IF NOT EXISTS idx_rooms_status     ON rooms (status);
+CREATE INDEX IF NOT EXISTS idx_rooms_gh_status  ON rooms (guest_house_id, status);
+"""
+
+
+# ═══════════════════════════════════════════════════════════════
+# TABLE 6: hold_sessions
+# BookMyShow-style: one hold per room per slot at a time.
+# Swept by holdExpiry background job every 30 seconds.
+# ═══════════════════════════════════════════════════════════════
+HOLD_SESSIONS_SQL = """
+CREATE TABLE IF NOT EXISTS hold_sessions (
+    id              UUID            PRIMARY KEY DEFAULT uuid_generate_v4(),
+    room_id         UUID            NOT NULL REFERENCES rooms (id) ON DELETE CASCADE,
+    employee_id     UUID            NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+
+    -- The dates the employee is trying to hold for
+    requested_check_in  DATE        NOT NULL,
+    requested_check_out DATE        NOT NULL,
+
+    -- Hold expiry (default 10 minutes from creation)
+    hold_expiry     TIMESTAMPTZ     NOT NULL,
+    is_released     BOOLEAN         NOT NULL DEFAULT FALSE,
+    released_at     TIMESTAMPTZ,
+    release_reason  VARCHAR(50),                                    -- 'expired' | 'submitted' | 'manual'
+
+    created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+
+    -- Only one active hold per room per date range at a time
+    CONSTRAINT uq_active_hold_per_room EXCLUDE USING btree (
+        room_id WITH =,
+        requested_check_in WITH =,
+        requested_check_out WITH =
+    ) WHERE (is_released = FALSE)
+);
+
+CREATE INDEX IF NOT EXISTS idx_holds_room        ON hold_sessions (room_id);
+CREATE INDEX IF NOT EXISTS idx_holds_employee    ON hold_sessions (employee_id);
+CREATE INDEX IF NOT EXISTS idx_holds_expiry      ON hold_sessions (hold_expiry) WHERE is_released = FALSE;
+CREATE INDEX IF NOT EXISTS idx_holds_active      ON hold_sessions (is_released, hold_expiry);
+"""
+
+
+# ═══════════════════════════════════════════════════════════════
+# TABLE 7: bookings
+# ═══════════════════════════════════════════════════════════════
+BOOKINGS_SQL = """
+CREATE TABLE IF NOT EXISTS bookings (
+    id                  UUID            PRIMARY KEY DEFAULT uuid_generate_v4(),
+    booking_ref         VARCHAR(20)     NOT NULL UNIQUE,            -- human-readable e.g. GH-2024-00142
+    room_id             UUID            NOT NULL REFERENCES rooms (id) ON DELETE RESTRICT,
+    employee_id         UUID            NOT NULL REFERENCES users (id) ON DELETE RESTRICT,
+    hold_session_id     UUID            REFERENCES hold_sessions (id) ON DELETE SET NULL,
+
+    status              booking_status  NOT NULL DEFAULT 'pending',
+
+    -- Dates
+    check_in_date       DATE            NOT NULL,
+    check_out_date      DATE            NOT NULL,
+    actual_check_in_at  TIMESTAMPTZ,                                -- set when employee physically checks in
+    actual_check_out_at TIMESTAMPTZ,                                -- set when employee physically checks out
+
+    -- Purpose / notes
+    purpose             VARCHAR(200),
+    employee_notes      TEXT,
+
+    -- Manager action
+    reviewed_by         UUID            REFERENCES users (id) ON DELETE SET NULL,
+    reviewed_at         TIMESTAMPTZ,
+    rejection_reason    TEXT,
+
+    -- Cancellation
+    cancelled_by        UUID            REFERENCES users (id) ON DELETE SET NULL,
+    cancelled_at        TIMESTAMPTZ,
+    cancellation_reason TEXT,
+
+    -- SLA escalation tracking
+    escalated           BOOLEAN         NOT NULL DEFAULT FALSE,
+    escalated_at        TIMESTAMPTZ,
+    escalated_to        UUID            REFERENCES users (id) ON DELETE SET NULL,
+
+    created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT chk_dates CHECK (check_out_date > check_in_date),
+
+    -- Prevent overlapping confirmed bookings for the same room
+    -- Application-level overlap check + this index act together
+    CONSTRAINT uq_room_date_confirmed EXCLUDE USING btree (
+        room_id WITH =,
+        check_in_date WITH &&,
+        check_out_date WITH &&
+    ) WHERE (status IN ('pending', 'confirmed', 'checked_in'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_bookings_room         ON bookings (room_id);
+CREATE INDEX IF NOT EXISTS idx_bookings_employee     ON bookings (employee_id);
+CREATE INDEX IF NOT EXISTS idx_bookings_status       ON bookings (status);
+CREATE INDEX IF NOT EXISTS idx_bookings_dates        ON bookings (check_in_date, check_out_date);
+CREATE INDEX IF NOT EXISTS idx_bookings_ref          ON bookings (booking_ref);
+CREATE INDEX IF NOT EXISTS idx_bookings_reviewed_by  ON bookings (reviewed_by);
+"""
+
+
+# ═══════════════════════════════════════════════════════════════
+# TABLE 8: waitlist
+# ═══════════════════════════════════════════════════════════════
+WAITLIST_SQL = """
+CREATE TABLE IF NOT EXISTS waitlist (
+    id              UUID            PRIMARY KEY DEFAULT uuid_generate_v4(),
+    room_id         UUID            NOT NULL REFERENCES rooms (id) ON DELETE CASCADE,
+    guest_house_id  UUID            NOT NULL REFERENCES guest_houses (id) ON DELETE CASCADE,
+    employee_id     UUID            NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+
+    requested_check_in  DATE        NOT NULL,
+    requested_check_out DATE        NOT NULL,
+
+    queue_position  SMALLINT        NOT NULL,                       -- 1 = next in line
+
+    -- Notification state
+    is_notified     BOOLEAN         NOT NULL DEFAULT FALSE,
+    notified_at     TIMESTAMPTZ,
+    claim_deadline  TIMESTAMPTZ,                                    -- notified_at + 2 hours
+    is_claimed      BOOLEAN         NOT NULL DEFAULT FALSE,
+    is_expired      BOOLEAN         NOT NULL DEFAULT FALSE,         -- claim window passed
+
+    created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT uq_employee_waitlist UNIQUE (room_id, employee_id, requested_check_in)
+);
+
+CREATE INDEX IF NOT EXISTS idx_waitlist_room      ON waitlist (room_id);
+CREATE INDEX IF NOT EXISTS idx_waitlist_employee  ON waitlist (employee_id);
+CREATE INDEX IF NOT EXISTS idx_waitlist_active    ON waitlist (is_notified, is_claimed, is_expired);
+"""
+
+
+# ═══════════════════════════════════════════════════════════════
+# TABLE 9: notifications
+# ═══════════════════════════════════════════════════════════════
+NOTIFICATIONS_SQL = """
+CREATE TABLE IF NOT EXISTS notifications (
+    id              UUID                PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id         UUID                NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    booking_id      UUID                REFERENCES bookings (id) ON DELETE SET NULL,
+    type            notification_type   NOT NULL,
+    channel         notification_channel NOT NULL DEFAULT 'in_app',
+    title           VARCHAR(200)        NOT NULL,
+    body            TEXT                NOT NULL,
+    is_read         BOOLEAN             NOT NULL DEFAULT FALSE,
+    read_at         TIMESTAMPTZ,
+    sent_at         TIMESTAMPTZ         NOT NULL DEFAULT NOW(),
+
+    -- Delivery tracking
+    delivery_status VARCHAR(20)         NOT NULL DEFAULT 'sent',    -- sent | failed | pending
+    delivery_error  TEXT,
+
+    created_at      TIMESTAMPTZ         NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_notif_user      ON notifications (user_id);
+CREATE INDEX IF NOT EXISTS idx_notif_booking   ON notifications (booking_id);
+CREATE INDEX IF NOT EXISTS idx_notif_unread    ON notifications (user_id, is_read) WHERE is_read = FALSE;
+CREATE INDEX IF NOT EXISTS idx_notif_type      ON notifications (type);
+"""
+
+
+# ═══════════════════════════════════════════════════════════════
+# TABLE 10: audit_logs
+# Immutable — no UPDATE or DELETE ever issued against this table.
+# ═══════════════════════════════════════════════════════════════
+AUDIT_LOGS_SQL = """
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id              UUID            PRIMARY KEY DEFAULT uuid_generate_v4(),
+    actor_id        UUID            REFERENCES users (id) ON DELETE SET NULL,
+    actor_role      user_role,                                      -- snapshot at time of action
+    action          audit_action    NOT NULL,
+    entity_type     VARCHAR(50)     NOT NULL,                       -- 'booking' | 'room' | 'user' etc.
+    entity_id       UUID,                                           -- the affected row's PK
+    old_state       JSONB,                                          -- snapshot before change
+    new_state       JSONB,                                          -- snapshot after change
+    meta            JSONB,                                          -- extra context (e.g. rejection reason)
+    ip_address      INET,
+    user_agent      TEXT,
+    created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_actor       ON audit_logs (actor_id);
+CREATE INDEX IF NOT EXISTS idx_audit_entity      ON audit_logs (entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_audit_action      ON audit_logs (action);
+CREATE INDEX IF NOT EXISTS idx_audit_created     ON audit_logs (created_at DESC);
+"""
+
+
+# ═══════════════════════════════════════════════════════════════
+# TABLE 11: system_config
+# Key-value store for Admin-configurable rules.
+# ═══════════════════════════════════════════════════════════════
+SYSTEM_CONFIG_SQL = """
+CREATE TABLE IF NOT EXISTS system_config (
+    id              UUID            PRIMARY KEY DEFAULT uuid_generate_v4(),
+    key             VARCHAR(100)    NOT NULL UNIQUE,
+    value           TEXT            NOT NULL,
+    data_type       VARCHAR(20)     NOT NULL DEFAULT 'string',      -- string | integer | boolean | float
+    description     TEXT,
+    updated_by      UUID            REFERENCES users (id) ON DELETE SET NULL,
+    updated_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_sysconfig_key ON system_config (key);
+"""
+
+
+# ═══════════════════════════════════════════════════════════════
+# TRIGGERS: updated_at auto-maintenance
+# ═══════════════════════════════════════════════════════════════
+TRIGGERS_SQL = """
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $$ DECLARE
+    t TEXT;
+BEGIN
+    FOREACH t IN ARRAY ARRAY[
+        'users', 'locations', 'guest_houses', 'rooms', 'bookings'
+    ] LOOP
+        EXECUTE format(
+            'DROP TRIGGER IF EXISTS trg_%1$s_updated_at ON %1$s;
+             CREATE TRIGGER trg_%1$s_updated_at
+             BEFORE UPDATE ON %1$s
+             FOR EACH ROW EXECUTE FUNCTION set_updated_at();',
+            t
+        );
+    END LOOP;
+END $$;
+"""
+
+
+# ═══════════════════════════════════════════════════════════════
+# TRIGGER: total_rooms counter on guest_houses
+# ═══════════════════════════════════════════════════════════════
+ROOM_COUNT_TRIGGER_SQL = """
+CREATE OR REPLACE FUNCTION sync_guest_house_room_count()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        UPDATE guest_houses SET total_rooms = total_rooms + 1
+        WHERE id = NEW.guest_house_id;
+    ELSIF TG_OP = 'DELETE' THEN
+        UPDATE guest_houses SET total_rooms = total_rooms - 1
+        WHERE id = OLD.guest_house_id;
+    END IF;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_rooms_count ON rooms;
+CREATE TRIGGER trg_rooms_count
+AFTER INSERT OR DELETE ON rooms
+FOR EACH ROW EXECUTE FUNCTION sync_guest_house_room_count();
+"""
+
+
+# ═══════════════════════════════════════════════════════════════
+# TRIGGER: audit_logs is append-only
+# Prevent any UPDATE or DELETE on audit_logs.
+# ═══════════════════════════════════════════════════════════════
+AUDIT_IMMUTABLE_TRIGGER_SQL = """
+CREATE OR REPLACE FUNCTION deny_audit_mutation()
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'audit_logs is immutable — UPDATE and DELETE are not permitted.';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_audit_immutable ON audit_logs;
+CREATE TRIGGER trg_audit_immutable
+BEFORE UPDATE OR DELETE ON audit_logs
+FOR EACH ROW EXECUTE FUNCTION deny_audit_mutation();
+"""
+
+
+# ═══════════════════════════════════════════════════════════════
+# TRIGGER: booking_ref auto-generation
+# Format: GH-YYYY-NNNNN (e.g. GH-2024-00142)
+# ═══════════════════════════════════════════════════════════════
+BOOKING_REF_TRIGGER_SQL = """
+CREATE SEQUENCE IF NOT EXISTS booking_ref_seq START 1 INCREMENT 1;
+
+CREATE OR REPLACE FUNCTION generate_booking_ref()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.booking_ref IS NULL OR NEW.booking_ref = '' THEN
+        NEW.booking_ref := 'GH-' || TO_CHAR(NOW(), 'YYYY') || '-' ||
+                           LPAD(nextval('booking_ref_seq')::TEXT, 5, '0');
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_booking_ref ON bookings;
+CREATE TRIGGER trg_booking_ref
+BEFORE INSERT ON bookings
+FOR EACH ROW EXECUTE FUNCTION generate_booking_ref();
+"""
+
+
+# ═══════════════════════════════════════════════════════════════
+# VIEWS
+# ═══════════════════════════════════════════════════════════════
+VIEWS_SQL = """
+-- v_room_availability: rooms with their next booking date for the availability page
+CREATE OR REPLACE VIEW v_room_availability AS
+SELECT
+    r.id                    AS room_id,
+    r.guest_house_id,
+    r.room_number,
+    r.floor,
+    r.type,
+    r.status,
+    r.has_ac,
+    r.has_wifi,
+    r.has_tv,
+    r.max_occupancy,
+    r.pos_x,
+    r.pos_y,
+    gh.name                 AS guest_house_name,
+    l.name                  AS location_name,
+    l.city,
+    -- Next confirmed booking start date (for UI display)
+    (
+        SELECT MIN(b.check_in_date)
+        FROM bookings b
+        WHERE b.room_id = r.id
+          AND b.status IN ('pending', 'confirmed', 'checked_in')
+          AND b.check_in_date >= CURRENT_DATE
+    )                       AS next_booking_date,
+    -- Active hold expiry (if any)
+    (
+        SELECT h.hold_expiry
+        FROM hold_sessions h
+        WHERE h.room_id = r.id
+          AND h.is_released = FALSE
+          AND h.hold_expiry > NOW()
+        ORDER BY h.created_at DESC
+        LIMIT 1
+    )                       AS active_hold_expiry
+FROM rooms r
+JOIN guest_houses gh ON gh.id = r.guest_house_id
+JOIN locations l     ON l.id  = gh.location_id
+WHERE r.id IS NOT NULL;
+
+
+-- v_manager_dashboard: pending bookings routed to the correct manager
+CREATE OR REPLACE VIEW v_manager_dashboard AS
+SELECT
+    b.id                    AS booking_id,
+    b.booking_ref,
+    b.status                AS booking_status,
+    b.check_in_date,
+    b.check_out_date,
+    b.purpose,
+    b.created_at            AS requested_at,
+    b.escalated,
+    b.escalated_at,
+    u.name                  AS employee_name,
+    u.email                 AS employee_email,
+    u.department,
+    r.room_number,
+    r.floor,
+    r.type                  AS room_type,
+    r.status                AS room_status,
+    gh.id                   AS guest_house_id,
+    gh.name                 AS guest_house_name,
+    l.name                  AS location_name,
+    ghm.user_id             AS manager_id
+FROM bookings b
+JOIN rooms r         ON r.id  = b.room_id
+JOIN guest_houses gh ON gh.id = r.guest_house_id
+JOIN locations l     ON l.id  = gh.location_id
+JOIN users u         ON u.id  = b.employee_id
+JOIN guest_house_managers ghm
+                     ON ghm.guest_house_id = gh.id
+                    AND ghm.is_active = TRUE;
+
+
+-- v_occupancy_report: admin occupancy stats by guest house
+CREATE OR REPLACE VIEW v_occupancy_report AS
+SELECT
+    gh.id                               AS guest_house_id,
+    gh.name                             AS guest_house_name,
+    l.name                              AS location_name,
+    COUNT(r.id)                         AS total_rooms,
+    COUNT(r.id) FILTER (WHERE r.status = 'available')           AS available,
+    COUNT(r.id) FILTER (WHERE r.status = 'held')                AS held,
+    COUNT(r.id) FILTER (WHERE r.status IN ('reserved_pending', 'reserved_confirmed')) AS reserved,
+    COUNT(r.id) FILTER (WHERE r.status = 'occupied')            AS occupied,
+    COUNT(r.id) FILTER (WHERE r.status = 'cleaning')            AS cleaning,
+    COUNT(r.id) FILTER (WHERE r.status = 'maintenance')         AS maintenance,
+    ROUND(
+        100.0 * COUNT(r.id) FILTER (WHERE r.status = 'occupied') /
+        NULLIF(COUNT(r.id), 0), 1
+    )                                   AS occupancy_pct
+FROM guest_houses gh
+JOIN locations l ON l.id = gh.location_id
+LEFT JOIN rooms r ON r.guest_house_id = gh.id
+WHERE gh.is_active = TRUE
+GROUP BY gh.id, gh.name, l.name;
+
+
+-- v_active_holds: for the hold expiry background job
+CREATE OR REPLACE VIEW v_active_holds AS
+SELECT
+    h.id,
+    h.room_id,
+    h.employee_id,
+    h.hold_expiry,
+    h.requested_check_in,
+    h.requested_check_out,
+    r.guest_house_id,
+    r.status AS room_status
+FROM hold_sessions h
+JOIN rooms r ON r.id = h.room_id
+WHERE h.is_released = FALSE
+  AND h.hold_expiry <= NOW();
+"""
+
+
+# ═══════════════════════════════════════════════════════════════
+# SEED DATA
+# ═══════════════════════════════════════════════════════════════
+def seed_data(cursor):
+    """Insert minimal seed data for development and testing."""
+
+    log.info("Seeding data...")
+
+    admin_id    = str(uuid.uuid4())
+    manager1_id = str(uuid.uuid4())
+    manager2_id = str(uuid.uuid4())
+    emp1_id     = str(uuid.uuid4())
+    emp2_id     = str(uuid.uuid4())
+    emp3_id     = str(uuid.uuid4())
+
+    loc_nagpur_id = str(uuid.uuid4())
+    loc_pune_id   = str(uuid.uuid4())
+    loc_nashik_id = str(uuid.uuid4())
+
+    gh_nagpur_id  = str(uuid.uuid4())
+    gh_pune_id    = str(uuid.uuid4())
+
+    # ── Users ──
+    cursor.execute("""
+        INSERT INTO users (id, name, email, password_hash, phone, role, mfa_enabled, department, employee_code)
+        VALUES
+            (%s, 'System Admin',    'admin@company.com',    %s, '9000000001', 'admin',    FALSE, 'IT',         'EMP-0001'),
+            (%s, 'Ravi Deshmukh',   'ravi@company.com',     %s, '9000000002', 'manager',  FALSE, 'Operations', 'EMP-0002'),
+            (%s, 'Sunita Kulkarni', 'sunita@company.com',   %s, '9000000003', 'manager',  FALSE, 'Operations', 'EMP-0003'),
+            (%s, 'Amit Shah',       'amit@company.com',     %s, '9000000004', 'employee', FALSE, 'Sales',      'EMP-0004'),
+            (%s, 'Priya Nair',      'priya@company.com',    %s, '9000000005', 'employee', FALSE, 'HR',         'EMP-0005'),
+            (%s, 'Rohit Joshi',     'rohit@company.com',    %s, '9000000006', 'employee', FALSE, 'Finance',    'EMP-0006')
+        ON CONFLICT (email) DO NOTHING;
+    """, (
+        admin_id,    hash_password("Admin@1234"),
+        manager1_id, hash_password("Manager@1234"),
+        manager2_id, hash_password("Manager@1234"),
+        emp1_id,     hash_password("Employee@1234"),
+        emp2_id,     hash_password("Employee@1234"),
+        emp3_id,     hash_password("Employee@1234"),
+    ))
+    log.info("  OK  users (6 rows)")
+
+    # ── Locations ──
+    cursor.execute("""
+        INSERT INTO locations (id, name, city, state, created_by)
+        VALUES
+            (%s, 'Nagpur Office',  'Nagpur', 'Maharashtra', %s),
+            (%s, 'Pune Office',    'Pune',   'Maharashtra', %s),
+            (%s, 'Nashik Office',  'Nashik', 'Maharashtra', %s)
+        ON CONFLICT DO NOTHING;
+    """, (
+        loc_nagpur_id, admin_id,
+        loc_pune_id,   admin_id,
+        loc_nashik_id, admin_id,
+    ))
+    log.info("  OK  locations (3 rows)")
+
+    # ── Guest Houses ──
+    cursor.execute("""
+        INSERT INTO guest_houses (id, location_id, name, address, contact_phone, created_by)
+        VALUES
+            (%s, %s, 'Nagpur Executive Suites', 'Civil Lines, Nagpur - 440001', '0712-2222001', %s),
+            (%s, %s, 'Pune Comfort Stay',       'Kothrud, Pune - 411038',       '020-2222002',  %s)
+        ON CONFLICT DO NOTHING;
+    """, (
+        gh_nagpur_id, loc_nagpur_id, admin_id,
+        gh_pune_id,   loc_pune_id,   admin_id,
+    ))
+    log.info("  OK  guest_houses (2 rows)")
+
+    # ── Manager Assignments ──
+    cursor.execute("""
+        INSERT INTO guest_house_managers (guest_house_id, user_id, role, assigned_by)
+        VALUES
+            (%s, %s, 'primary', %s),
+            (%s, %s, 'backup',  %s),
+            (%s, %s, 'primary', %s)
+        ON CONFLICT DO NOTHING;
+    """, (
+        gh_nagpur_id, manager1_id, admin_id,
+        gh_nagpur_id, manager2_id, admin_id,
+        gh_pune_id,   manager2_id, admin_id,
+    ))
+    log.info("  OK  guest_house_managers (3 rows)")
+
+    # ── Rooms — Nagpur (6 rooms) ──
+    nagpur_rooms = [
+        ("101", 1, "single"),
+        ("102", 1, "single"),
+        ("103", 1, "double"),
+        ("201", 2, "double"),
+        ("202", 2, "suite"),
+        ("203", 2, "single"),
+    ]
+    for i, (num, floor, rtype) in enumerate(nagpur_rooms):
+        cursor.execute("""
+            INSERT INTO rooms (guest_house_id, room_number, floor, type, pos_x, pos_y)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (guest_house_id, room_number) DO NOTHING;
+        """, (gh_nagpur_id, num, floor, rtype, (i % 3) * 120, (i // 3) * 100))
+
+    # ── Rooms — Pune (4 rooms) ──
+    pune_rooms = [
+        ("A01", 1, "single"),
+        ("A02", 1, "double"),
+        ("B01", 2, "suite"),
+        ("B02", 2, "single"),
+    ]
+    for i, (num, floor, rtype) in enumerate(pune_rooms):
+        cursor.execute("""
+            INSERT INTO rooms (guest_house_id, room_number, floor, type, pos_x, pos_y)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (guest_house_id, room_number) DO NOTHING;
+        """, (gh_pune_id, num, floor, rtype, (i % 2) * 120, (i // 2) * 100))
+    log.info("  OK  rooms (10 rows)")
+
+    # ── System Config ──
+    config_rows = [
+        ("hold_duration_minutes",       "10",   "integer", "Room hold duration after employee clicks (BookMyShow model)"),
+        ("hold_sweep_interval_seconds", "30",   "integer", "How often the background job checks for expired holds"),
+        ("approval_sla_hours",          "4",    "integer", "Manager must approve/reject within this window"),
+        ("backup_sla_hours",            "2",    "integer", "Backup manager SLA after primary escalation"),
+        ("check_in_time",               "12:00","string",  "Standard check-in time (HH:MM, 24hr)"),
+        ("check_out_time",              "11:00","string",  "Standard check-out time (HH:MM, 24hr)"),
+        ("cleaning_buffer_hours",       "2",    "integer", "Minimum buffer between checkout and next check-in"),
+        ("noshow_flag_hours",           "2",    "integer", "Hours after check-in time before no-show flag is raised"),
+        ("waitlist_claim_hours",        "2",    "integer", "Hours employee has to claim a waitlist slot"),
+        ("cancellation_window_hours",   "12",   "integer", "Hours before check-in that free cancellation is allowed"),
+        ("max_concurrent_bookings",     "2",    "integer", "Max active bookings an employee can hold at once"),
+    ]
+    for key, val, dtype, desc in config_rows:
+        cursor.execute("""
+            INSERT INTO system_config (key, value, data_type, description, updated_by)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, description = EXCLUDED.description;
+        """, (key, val, dtype, desc, admin_id))
+    log.info(f"  OK  system_config ({len(config_rows)} rows)")
+
+    log.info("Seed data complete.")
+
+
+# ═══════════════════════════════════════════════════════════════
+# DROP ALL
+# ═══════════════════════════════════════════════════════════════
+DROP_SQL = """
+DROP VIEW  IF EXISTS v_active_holds        CASCADE;
+DROP VIEW  IF EXISTS v_occupancy_report    CASCADE;
+DROP VIEW  IF EXISTS v_manager_dashboard   CASCADE;
+DROP VIEW  IF EXISTS v_room_availability   CASCADE;
+
+DROP TABLE IF EXISTS audit_logs            CASCADE;
+DROP TABLE IF EXISTS notifications         CASCADE;
+DROP TABLE IF EXISTS waitlist              CASCADE;
+DROP TABLE IF EXISTS bookings              CASCADE;
+DROP TABLE IF EXISTS hold_sessions         CASCADE;
+DROP TABLE IF EXISTS rooms                 CASCADE;
+DROP TABLE IF EXISTS guest_house_managers  CASCADE;
+DROP TABLE IF EXISTS guest_houses          CASCADE;
+DROP TABLE IF EXISTS locations             CASCADE;
+DROP TABLE IF EXISTS system_config         CASCADE;
+DROP TABLE IF EXISTS users                 CASCADE;
+
+DROP SEQUENCE IF EXISTS booking_ref_seq    CASCADE;
+
+DROP TYPE IF EXISTS audit_action           CASCADE;
+DROP TYPE IF EXISTS notification_channel   CASCADE;
+DROP TYPE IF EXISTS notification_type      CASCADE;
+DROP TYPE IF EXISTS booking_status         CASCADE;
+DROP TYPE IF EXISTS room_status            CASCADE;
+DROP TYPE IF EXISTS room_type              CASCADE;
+DROP TYPE IF EXISTS manager_role           CASCADE;
+DROP TYPE IF EXISTS user_role              CASCADE;
+"""
+
+
+# ═══════════════════════════════════════════════════════════════
+# VERIFY
+# ═══════════════════════════════════════════════════════════════
+EXPECTED_TABLES = [
+    "users", "locations", "guest_houses", "guest_house_managers",
+    "rooms", "hold_sessions", "bookings", "waitlist",
+    "notifications", "audit_logs", "system_config",
+]
+
+EXPECTED_VIEWS = [
+    "v_room_availability", "v_manager_dashboard",
+    "v_occupancy_report", "v_active_holds",
+]
+
+
+def verify(cursor):
+    cursor.execute("""
+        SELECT tablename FROM pg_tables
+        WHERE schemaname = 'public'
+        ORDER BY tablename;
+    """)
+    existing_tables = {r[0] for r in cursor.fetchall()}
+
+    cursor.execute("""
+        SELECT viewname FROM pg_views
+        WHERE schemaname = 'public'
+        ORDER BY viewname;
+    """)
+    existing_views = {r[0] for r in cursor.fetchall()}
+
+    log.info("─── Table verification ───────────────────")
+    all_ok = True
+    for t in EXPECTED_TABLES:
+        ok = t in existing_tables
+        if ok:
+            log.info(f"  ✓  {t}")
+        else:
+            log.error(f"  ✗  {t}  MISSING")
+            all_ok = False
+
+    log.info("─── View verification ────────────────────")
+    for v in EXPECTED_VIEWS:
+        ok = v in existing_views
+        if ok:
+            log.info(f"  ✓  {v}")
+        else:
+            log.error(f"  ✗  {v}  MISSING")
+            all_ok = False
+
+    if all_ok:
+        log.info("All tables and views present.")
+    else:
+        log.error("Some objects are missing — re-run without --verify to recreate.")
+    return all_ok
+
+
+# ═══════════════════════════════════════════════════════════════
+# MAIN
+# ═══════════════════════════════════════════════════════════════
+def main():
+    parser = argparse.ArgumentParser(description="Guest House DB initializer")
+    parser.add_argument("--drop",   action="store_true", help="Drop all objects before creating")
+    parser.add_argument("--seed",   action="store_true", help="Insert seed data after creating tables")
+    parser.add_argument("--verify", action="store_true", help="Verify schema only, no changes")
+    args = parser.parse_args()
+
+    log.info("Connecting to database...")
+    try:
+        conn = get_connection()
+    except Exception as e:
+        log.error(f"Connection failed: {e}")
+        sys.exit(1)
+
+    conn.autocommit = False
+    cur = conn.cursor()
+
+    try:
+        if args.verify:
+            verify(cur)
+            cur.close()
+            conn.close()
+            return
+
+        if args.drop:
+            log.info("Dropping all objects...")
+            cur.execute(DROP_SQL)
+            conn.commit()
+            log.info("Drop complete.")
+
+        log.info("Creating extensions...")
+        cur.execute(EXTENSIONS_SQL)
+
+        log.info("Creating enums...")
+        cur.execute(ENUMS_SQL)
+
+        log.info("Creating tables...")
+        steps = [
+            (USERS_SQL,                "users"),
+            (LOCATIONS_SQL,            "locations"),
+            (GUEST_HOUSES_SQL,         "guest_houses"),
+            (GUEST_HOUSE_MANAGERS_SQL, "guest_house_managers"),
+            (ROOMS_SQL,                "rooms"),
+            (HOLD_SESSIONS_SQL,        "hold_sessions"),
+            (BOOKINGS_SQL,             "bookings"),
+            (WAITLIST_SQL,             "waitlist"),
+            (NOTIFICATIONS_SQL,        "notifications"),
+            (AUDIT_LOGS_SQL,           "audit_logs"),
+            (SYSTEM_CONFIG_SQL,        "system_config"),
+        ]
+        for sql, label in steps:
+            run(cur, sql, label)
+
+        log.info("Creating triggers...")
+        run(cur, TRIGGERS_SQL,                "updated_at triggers")
+        run(cur, ROOM_COUNT_TRIGGER_SQL,      "room count trigger")
+        run(cur, AUDIT_IMMUTABLE_TRIGGER_SQL, "audit immutability trigger")
+        run(cur, BOOKING_REF_TRIGGER_SQL,     "booking_ref auto-generation")
+
+        log.info("Creating views...")
+        run(cur, VIEWS_SQL, "all views")
+
+        if args.seed:
+            seed_data(cur)
+
+        conn.commit()
+        log.info("─────────────────────────────────────────")
+        log.info("Schema initialized successfully.")
+        log.info("─────────────────────────────────────────")
+
+        verify(cur)
+
+    except Exception as e:
+        conn.rollback()
+        log.error(f"Error: {e}")
+        cur.close()
+        conn.close()
+        sys.exit(1)
+
+    cur.close()
+    conn.close()
+
+
+if __name__ == "__main__":
+    main()
