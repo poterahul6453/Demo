@@ -1,0 +1,469 @@
+Build a Corporate Guest House Management System with two separate login portals — Super Admin and Guest House Manager. Use React + Tailwind CSS. Mock all data locally (no backend). Clean professional design: dark sidebar, white content area.
+
+---
+
+## AUTH & ROUTING
+
+Two login screens on the same page with a role toggle (Super Admin / Manager):
+
+Super Admin login: admin@company.com / admin123
+Manager login: manager@gh.com / manager123
+
+Store role in localStorage after login. Protect all routes — redirect to login if not authenticated. Show logout button in sidebar footer.
+
+---
+
+## DESIGN SYSTEM (apply everywhere)
+
+- Sidebar: dark navy (#0f172a), white text, active item has accent left border + subtle highlight
+- Content: white bg, clean cards, generous whitespace
+- Font: Inter
+- Card radius: 10-12px
+- Stat cards: light gray bg (#f8fafc), large bold number, small muted label below
+- Status colors (use EXACTLY these hex values):
+  Available → bg #E1F5EE border #5DCAA5 text #085041
+  Booked → bg #E6F1FB border #85B7EB text #042C53
+  Occupied → bg #EEEDFE border #AFA9EC text #26215C
+  Cleaning → bg #FAEEDA border #EF9F27 text #412402
+  Maintenance → bg #FCEBEB border #F09595 text #501313
+- Buttons: primary = navy filled, secondary = outlined
+- Tables: clean, subtle alternating row bg, no heavy borders
+- Modals: centered, backdrop blur, smooth open/close animation
+- Toasts: top-right, auto-dismiss after 3 seconds
+- No gradients, no heavy shadows
+
+---
+
+## MOCK DATA (shared across both portals)
+
+Guest Houses:
+1. id:gh1, "Raipur Executive Suites", Raipur, 3 floors, manager: Rajesh Kumar
+2. id:gh2, "Mumbai Business Lodge", Mumbai, 4 floors, manager: Sneha Patil
+3. id:gh3, "Delhi Corporate Inn", Delhi, 2 floors, manager: Arvind Singh
+
+Managers:
+1. Rajesh Kumar, EMP001, rajesh@company.com, 9876543210, assigned: gh1
+2. Sneha Patil, EMP002, sneha@company.com, 9876543211, assigned: gh2
+3. Arvind Singh, EMP003, arvind@company.com, 9876543212, assigned: gh3
+4. Meena Joshi, EMP004, meena@company.com, 9876543213, unassigned
+
+Rooms (for gh1 — Raipur, 3 floors, 4-column grid):
+Floor 1: 101 Single grid(0,0), 102 Double grid(1,0), 103 Suite grid(2,0), 104 Single grid(3,0), 105 Double grid(0,1), 106 Single grid(1,1)
+Floor 2: 201 Double grid(0,0), 202 Single grid(1,0), 203 Suite grid(2,0), 204 Single grid(3,0), 205 Double grid(0,1), 206 Double grid(1,1)
+Floor 3: 301 Suite grid(0,0), 302 Single grid(1,0), 303 Double grid(2,0), 304 Single grid(3,0), 305 Double grid(0,1), 306 Single grid(1,1)
+
+Room statuses:
+101→available, 102→occupied, 103→maintenance, 104→available
+105→booked, 106→available, 201→occupied, 202→available
+203→booked, 204→available, 205→available, 206→occupied
+301→available, 302→booked, 303→maintenance, 304→available
+305→occupied, 306→available
+
+Bookings (8 records):
+1. Rahul Sharma, 9811111111, TechCorp, Room 102, Apr 1 2PM → Apr 3 11AM, checked_in
+2. Priya Nair, 9822222222, InfoSys, Room 203, Apr 2 3PM → Apr 5 11AM, confirmed
+3. Anita Desai, 9833333333, Wipro, Room 201, Mar 30 2PM → Apr 2 11AM, checked_in
+4. Vikram Rao, 9844444444, HCL, Room 302, Apr 3 2PM → Apr 6 11AM, confirmed
+5. Meera Patel, 9855555555, TCS, Room 105, Apr 2 2PM → Apr 4 11AM, confirmed
+6. Sunita Roy, 9866666666, Infra Ltd, Room 206, Apr 1 2PM → Apr 3 11AM, checked_in
+7. Arjun Mehta, 9877777777, BPCL, Room 305, Mar 31 2PM → Apr 2 11AM, checked_in
+8. Deepak Kumar, 9888888888, NTPC, Room 104, Apr 5 2PM → Apr 7 11AM, confirmed (cancelled)
+
+Maintenance tickets (5):
+1. Room 103, Electrical, High, "AC circuit trip — room unusable", open, reported Apr 1
+2. Room 303, Plumbing, Medium, "Bathroom tap leaking", in_progress, reported Apr 2
+3. Room 201, Furniture, Low, "Chair leg broken", resolved, Apr 1→Apr 1, 4hrs
+4. Room 104, AC/HVAC, High, "AC not cooling", resolved, Mar 30→Mar 31, 6hrs
+5. Room 202, Appliances, Medium, "TV remote not working", resolved, Mar 29→Mar 29, 1hr
+
+---
+
+## SUPER ADMIN PORTAL
+
+Sidebar links (in order): Dashboard · Guest Houses · Managers · Room Layout Builder · Reports · Settings
+
+### DASHBOARD PAGE
+
+Top: 4 stat cards
+- Total Guest Houses (3)
+- Total Managers (4)
+- Total Rooms (18)
+- Active Bookings (count of confirmed + checked_in)
+
+Below stats: Guest Houses table
+Columns: Name, City, Floors, Total Rooms, Assigned Manager (name or "Unassigned" in amber), Status badge (Active/Inactive), Actions (Edit button, View Layout button)
+
+Each row expandable to show room count per status.
+
+---
+
+### GUEST HOUSES PAGE
+
+Grid of guest house cards (3 columns).
+Each card: name (bold), city, address, floors, total rooms, assigned manager name + avatar initials, Active/Inactive toggle, "Edit" and "View Layout" icon buttons.
+
+Top right: "Add Guest House" primary button → opens modal.
+
+ADD GUEST HOUSE modal fields:
+1. Guest House Name*
+2. City*
+3. Full Address*
+4. Number of Floors* (number, 1-10)
+5. Capacity (number)
+6. Assign Manager* — searchable dropdown showing all managers with:
+   - Name + Employee ID
+   - Green dot + "Available" if unassigned
+   - Amber dot + "Assigned to [GH name]" if already assigned
+   Note below dropdown: "If you select an already-assigned manager, they will be moved from their current guest house."
+7. Status toggle (Active/Inactive, default Active)
+
+Footer: Cancel · "Create Guest House" (primary)
+
+On submit: add to mock data, update manager's assignment.
+
+EDIT GUEST HOUSE modal: same fields pre-filled + a "Manager Assignment" section at bottom showing current manager card (avatar + name + email) with "Change Manager" button that re-opens manager dropdown.
+
+---
+
+### MANAGERS PAGE
+
+Top: search bar (filter by name/email/employee ID) + "Add Manager" primary button (right-aligned)
+
+Table columns:
+- Avatar (colored initials circle, purple bg)
+- Full Name
+- Employee ID
+- Email
+- Phone
+- Assigned Guest House (name with building icon, or "Unassigned" in amber italic)
+- Status badge (Active/Inactive)
+- Actions: Edit icon · Reassign icon · Deactivate icon (with confirm dialog)
+
+ADD MANAGER modal fields:
+1. Full Name*
+2. Employee ID*
+3. Work Email*
+4. Phone Number*
+5. Assign to Guest House — dropdown (same as above, optional, can leave unassigned)
+6. Temporary Password — auto-generated 10-char alphanumeric shown in read-only input with copy icon button
+7. Send Credentials via Email toggle (on by default, mock only)
+
+Footer: Cancel · "Create Manager"
+
+REASSIGN modal (clicking reassign icon on a manager row):
+- Shows: "Reassigning: [Manager Name]"
+- Current: "Currently assigned to [GH name]" or "Currently unassigned"
+- Dropdown: all guest houses + "Remove assignment" option at top
+- Amber warning box: "This manager will immediately lose access to their current guest house."
+- Footer: Cancel · "Confirm Reassignment"
+
+---
+
+### ROOM LAYOUT BUILDER PAGE
+
+Step-by-step flow:
+
+STEP 1 — Guest house selector
+Dropdown to select guest house. On select, show guest house name + city + number of floors.
+
+STEP 2 — Floor tabs
+Tabs: Floor 1, Floor 2, Floor 3 (dynamic based on floors count).
+
+STEP 3 — Grid + room panel
+Two-panel layout:
+Left panel (65%): Visual 4×3 grid of cells.
+- Empty cells: light dashed border, "+" icon in center, cursor pointer
+- Placed room cells: colored card showing room number (bold) + type (small) + status dot
+- Clicking empty cell → highlights it (blue border) + opens right panel form
+- Clicking placed room → opens right panel with room details for edit/remove
+
+Right panel (35%): "Place Room" form
+- Room Number* (text, e.g. "101")
+- Room Type* (radio: Single / Double / Suite)
+- Amenities (checkboxes: AC, WiFi, TV, Kitchen, Geyser)
+- "Place Room" primary button → places room card in selected cell
+- If editing: "Update Room" + "Remove Room" (red, with confirm) buttons
+
+Bottom bar: "Save Layout" primary button → console.log the full layout JSON + show success toast "Layout saved successfully"
+
+Grid cell states:
+- Empty: bg white, border dashed #cbd5e1, "+" text #94a3b8
+- Selected empty: bg #eff6ff, border solid #3b82f6
+- Placed (available): bg #E1F5EE, border #5DCAA5
+- Placed (maintenance): bg #FCEBEB, border #F09595
+
+---
+
+### REPORTS PAGE (Admin)
+
+Date range filter (From → To) + "Generate Report" button at top.
+
+Tabs: Overview · Occupancy · Maintenance
+
+OVERVIEW tab:
+- 3 stat cards: Total Bookings in period, Total Guest Nights, Avg Occupancy %
+- Bar chart (recharts) — bookings per guest house per month (last 6 months)
+- Table: Guest House, Total Bookings, Avg Stay Days, Occupancy %
+
+OCCUPANCY tab:
+- Bar chart — occupancy % per room type (Single/Double/Suite)
+- Table: Location, Room, Type, Booked Days, Available Days, Occupancy %
+
+MAINTENANCE tab:
+- Donut chart (recharts) — tickets by category
+- Table: Location, Room, Category, Priority, Status, Reported, Resolved, Resolution Time
+
+"Download Excel" + "Download PDF" buttons per tab (mock — show toast "Report downloaded")
+
+---
+
+### SETTINGS PAGE
+
+Form card with these fields:
+- Company Name (text)
+- Default Check-in Time (time picker, default 14:00)
+- Default Check-out Time (time picker, default 11:00)
+- Cleaning Buffer Duration (number input + "minutes" label, default 60)
+- Maximum Booking Days in Advance (number input, default 30)
+- "Save Settings" primary button → show success toast
+
+---
+
+## MANAGER PORTAL
+
+Manager logs in → sees their assigned guest house name below logo in sidebar.
+ALL data scoped to assigned guest house only. Cannot see other guest houses.
+
+Sidebar links (in order): Dashboard · Room Grid · New Booking · Bookings · Maintenance · Reports
+
+---
+
+### MANAGER DASHBOARD PAGE
+
+Top: 4 stat cards
+- Available Rooms (green, count)
+- Occupied Rooms (purple, count)
+- Under Maintenance (red, count)
+- Total Bookings This Month (blue, count)
+
+"Today's Schedule" section — two columns:
+Left: "Expected Check-ins" — list cards showing guest name, room number, scheduled time, "Check In" button
+Right: "Expected Check-outs" — list cards showing guest name, room number, scheduled time, "Check Out" button
+
+"Open Maintenance Issues" widget below — compact list of open+in_progress tickets showing room, category badge, priority badge, description snippet.
+
+---
+
+### ROOM GRID PAGE
+
+Floor tabs at top (Floor 1, Floor 2, Floor 3).
+Filter pills: All · Available · Booked · Occupied · Maintenance
+Stat count badges next to each filter.
+
+4-column CSS grid. Rooms positioned by grid_x and grid_y from layout.
+
+Room card design:
+- Room number (18px bold)
+- Room type (12px muted)
+- Status dot (top-right corner, 8px circle)
+- Apply exact status colors from design system
+- If Occupied: show guest name + "Out: [date]" below type
+- If Booked: show guest name + "In: [date]" below type
+- If Maintenance: show category below type in red muted text
+
+Clicking any room card → opens RIGHT SIDE DRAWER (slides from right, 380px wide, overlay backdrop):
+
+Drawer header: Room [number] · [type] · Floor [n]
+Amenities row: small icon badges (AC, WiFi, TV etc.)
+Current status badge (large, colored)
+
+Drawer content by status:
+
+IF AVAILABLE:
+  Show "No active booking" message
+  "Create Booking" green primary button → navigates to New Booking page with room pre-selected
+
+IF BOOKED:
+  Guest info card: name, phone, company
+  Scheduled check-in: date + time
+  Scheduled check-out: date + time
+  Duration: X nights
+  "Check In" green button → sets actual_checkin = now, status → Occupied, success toast
+  "Cancel Booking" red outlined button → confirm modal → cancels booking, status → Available
+
+IF OCCUPIED:
+  Guest info card: name, phone, company
+  Checked in at: actual timestamp
+  Scheduled check-out: date + time
+  "Check Out" amber button → confirm modal "Confirm checkout for [guest]?" → sets actual_checkout = now, status → Maintenance (for cleaning purposes - see note below), creates maintenance log, success toast
+  "Report Issue" secondary outlined button → opens Report Issue modal
+
+IF MAINTENANCE:
+  Issue details: category badge, priority badge
+  Description text
+  Reported at timestamp
+  Status: Open / In Progress
+  "Mark In Progress" button (if Open)
+  "Mark Resolved" button → opens resolution modal (resolution note required) → on resolve: status → Available, ticket closed
+
+Note on Check Out: when manager clicks Check Out, room status goes to "Maintenance" temporarily for the cleaning buffer period (configurable, default 60 mins). After manager manually marks it ready via the Maintenance page, it becomes Available. This replaces the separate Housekeeping module.
+
+---
+
+### NEW BOOKING PAGE
+
+Full page form with two sections side by side on desktop, stacked on mobile.
+
+Left section — GUEST INFORMATION:
+- Guest Full Name* (text)
+- Phone Number* (text)
+- Email (text, optional)
+- Company / Department (text, optional)
+- Purpose of Visit (text, optional)
+- Additional Notes (textarea, optional)
+
+Right section — ROOM & SCHEDULE:
+- Select Room* — dropdown showing ONLY available rooms
+  Each option: "Room [number] · [type] · Floor [n]"
+  If navigated from Room Grid with pre-selected room, auto-fill this field
+- Check-in Date* (date picker)
+- Check-in Time* (time picker, default from settings: 14:00)
+- Check-out Date* (date picker)
+- Check-out Time* (time picker, default from settings: 11:00)
+
+LIVE CONFLICT CHECK (triggers on change of room, dates, or times):
+Show a status box below the schedule fields:
+- Checking... (gray, spinner)
+- ✓ Room available for selected dates (green box)
+- ⚠ Conflict: Room 102 is occupied until Apr 3 12:00. Next available slot: Apr 3 from 12:00 (red box)
+- ⚠ Cleaning buffer: Previous guest checks out at 10:00. Room available after cleaning at 11:00 (amber box)
+
+Duration display: auto-calculate and show "X nights · Y days" below date fields
+
+Bottom bar (sticky): "Cancel" secondary + "Confirm Booking" primary button
+On confirm: add to bookings, room status → Booked, success toast, redirect to Bookings page
+
+---
+
+### BOOKINGS PAGE
+
+Tab bar: All · Confirmed · Checked In · Completed · Cancelled
+
+Search bar: filter by guest name or room number.
+
+Table columns: #, Guest Name, Phone, Company, Room, Check-in (date + time), Check-out (date + time), Nights, Status badge, Actions
+
+Actions:
+- Confirmed → "Check In" green button
+- Checked In → "Check Out" amber button
+- Any active → "Cancel" red icon button with confirm dialog
+- Any → "View" eye icon → expands row to full detail inline
+
+Check In action: actual_checkin = now, room → Occupied
+Check Out action: actual_checkout = now, room → Maintenance (cleaning buffer starts), toast "Checkout complete. Room marked for cleaning."
+
+Clicking row expands it to show: all guest details, purpose, notes, booking timeline (Booked → Checked In → Checked Out).
+
+---
+
+### MAINTENANCE PAGE
+
+This page handles BOTH maintenance issues AND post-checkout cleaning buffer.
+
+Top row: "Mark Room for Maintenance" primary button (right-aligned)
+Filter row: Status tabs (All · Open · In Progress · Resolved) + Category dropdown filter + Priority filter
+
+STATS ROW — 4 cards:
+- Open Issues (red)
+- In Progress (amber)
+- Resolved This Month (green)
+- Avg Resolution Time (blue, in hours)
+
+TICKET CARDS — each card:
+- Header: Room [number] · Floor [n] (bold) + category badge + priority badge (right)
+- Category badge colors:
+  Electrical=amber, Plumbing=blue, AC/HVAC=teal, Furniture=gray,
+  Cleaning/Post-checkout=green, Pest Control=red, Appliances=purple, Other=gray
+- Description text (2 lines)
+- Footer: "Reported [time ago]" + status badge + action buttons
+
+Action buttons per status:
+- Open → "Start Work" button → status: in_progress
+- In Progress → "Mark Resolved" button → opens modal
+- Resolved → show "Resolved [date]" + resolution note expandable
+
+"Mark Resolved" modal:
+- Resolution Note* (textarea)
+- "Confirm Resolution" button → ticket resolved, if room was in Maintenance status → room status → Available
+
+"MARK ROOM FOR MAINTENANCE" modal (top button):
+Fields:
+1. Select Room* — dropdown of ALL rooms (show current status next to name)
+   e.g. "Room 102 · Double · Floor 1 · Occupied" 
+   Show warning if selecting occupied room: "⚠ This room is currently occupied. The booking will not be affected but room will be flagged."
+2. Category* — dropdown:
+   Electrical / Plumbing / AC/HVAC / Furniture / Pest Control / Appliances / Other
+3. Priority* — radio buttons: Low · Medium · High
+4. Description* — textarea
+5. Block room from bookings — toggle (ON by default)
+   Label: "When ON, room status → Maintenance and cannot be booked until resolved"
+
+On submit:
+- Create maintenance ticket
+- If "Block room" toggle is ON → room status → Maintenance immediately
+- Room disappears from Available filter in New Booking page
+- Show toast: "Room [number] marked for maintenance and blocked from new bookings"
+
+POST-CHECKOUT CLEANING shown as special ticket type:
+When a room is checked out, auto-create a ticket:
+- Category: "Cleaning / Post-checkout"  
+- Priority: Low
+- Description: "Post-checkout cleaning required. Buffer: 60 mins"
+- Room stays in Maintenance status
+- Manager resolves this ticket (clicks "Mark Resolved") → room → Available
+- This replaces the separate Housekeeping module entirely
+
+---
+
+### MANAGER REPORTS PAGE
+
+Date range picker (From → To) + "Generate" button at top.
+
+4 tabs: Booking Report · Occupancy Report · Maintenance Report · Summary
+
+BOOKING REPORT tab:
+Summary cards: Total Bookings, Total Guest Nights, Unique Guests
+Table: #, Guest Name, Company, Room, Check-in, Check-out, Nights, Purpose, Status
+"Download Excel" button + "Download PDF" button (show toast on click)
+
+OCCUPANCY REPORT tab:
+Summary: Occupancy % for period (large metric)
+Bar chart (recharts): occupancy % per room
+Table: Room, Type, Floor, Booked Days, Available Days, Occupancy %
+Download buttons
+
+MAINTENANCE REPORT tab:
+Summary cards: Total Tickets, Avg Resolution (hrs), Open Issues
+Donut chart (recharts): by category
+Table: Room, Category, Priority, Reported Date, Resolved Date, Resolution Time (hrs), Resolved By
+Download buttons
+
+SUMMARY tab:
+Combined overview — all 3 report types in compact form on one page.
+Print-friendly layout.
+"Download Full Report" button (PDF, mock toast)
+
+---
+
+## IMPORTANT RULES
+
+1. Remove ALL employee management — no employees page, no employee data, no employee-related fields anywhere.
+2. Remove ALL separate housekeeping module — post-checkout cleaning is handled as a maintenance ticket type.
+3. Room status flow: Available → Booked → Occupied → Maintenance (cleaning) → Available
+4. Maintenance page is the single place to manage both real issues and post-checkout cleaning.
+5. "Mark Room for Maintenance" is the primary way manager blocks a room — it creates a ticket AND blocks the room.
+6. Room in Maintenance status = invisible in New Booking dropdown and Room Grid available filter.
+7. All reports scoped to manager's guest house only.
+8. Admin reports span all guest houses.
+9. No approval workflow — manager creates bookings directly, no employee self-booking.
+10. Guest has no login — manager enters guest info manually.
