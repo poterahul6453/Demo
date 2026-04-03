@@ -1,0 +1,666 @@
+Build a Corporate Guest House Management System with two login portals — Super Admin and Guest House Manager. React + Tailwind CSS. Mock all data locally. No backend needed. Use a clean professional design.
+
+---
+
+## CORE CONCEPT
+
+The manager is the human operator. There is no guest portal, no self-booking, no automation. The manager handles all communication with guests outside the system (phone, WhatsApp, email). The system is a tool the manager uses to record decisions, manage rooms, and generate reports.
+
+When a booking is confirmed by admin, the system sends a confirmation email to the guest via SMTP (mocked in UI as a "Send Email" toast). Admin can assign a manager to multiple guest houses. Manager sees all assigned guest houses and can switch between them.
+
+---
+
+## DESIGN SYSTEM
+
+- Sidebar: dark navy #0f172a, white text, active item has accent left border #6366f1
+- Content area: white bg, gray page bg #f8fafc
+- Font: Inter
+- Card radius: 10px
+- Stat cards: white bg, 1px border #e2e8f0, large bold number, small muted label
+- Primary button: #0f172a filled white text
+- Secondary button: white bg, 1px border #cbd5e1
+- Danger button: #ef4444 filled
+- Status colors — use EXACTLY these:
+  Available → bg #E1F5EE border #5DCAA5 text #085041 dot #1D9E75
+  Pending Approval → bg #FEF3C7 border #F59E0B text #78350F dot #F59E0B
+  Booked → bg #E6F1FB border #85B7EB text #042C53 dot #378ADD
+  Occupied → bg #EEEDFE border #AFA9EC text #26215C dot #7F77DD
+  Maintenance → bg #FCEBEB border #F09595 text #501313 dot #E24B4A
+- Tables: clean, #f8fafc alternate rows, no heavy borders
+- Modals: centered, dark backdrop 50% opacity, 400-500px wide
+- Toasts: top-right, green for success, red for error, amber for warning, auto-dismiss 4s
+- No gradients, no heavy drop shadows
+- Booking status badge colors:
+  Pending → amber
+  Confirmed → blue
+  Checked In → purple
+  Completed → green
+  Rejected → red
+  Cancelled → gray
+
+---
+
+## MOCK DATA
+
+### Company Settings:
+- Company Name: "Bharat Infra Corp"
+- Default Check-in Time: 14:00
+- Default Check-out Time: 11:00
+- Cleaning Buffer: 60 minutes
+- Booking Expiry Duration: 4 hours
+- SMTP Email: noreply@bharatinfra.com
+
+### Managers (4):
+1. Rajesh Kumar, EMP001, rajesh@bharatinfra.com, 9876543210
+   Assigned GH: gh1 (Raipur), gh3 (Delhi)
+2. Sneha Patil, EMP002, sneha@bharatinfra.com, 9876543211
+   Assigned GH: gh2 (Mumbai)
+3. Arvind Singh, EMP003, arvind@bharatinfra.com, 9876543212
+   Assigned GH: gh2 (Mumbai), gh3 (Delhi)
+4. Meena Joshi, EMP004, meena@bharatinfra.com, 9876543213
+   Unassigned
+
+### Guest Houses (3):
+- gh1: "Raipur Executive Suites", Raipur, 3 floors, managers: [Rajesh Kumar]
+- gh2: "Mumbai Business Lodge", Mumbai, 4 floors, managers: [Sneha Patil, Arvind Singh]
+- gh3: "Delhi Corporate Inn", Delhi, 2 floors, managers: [Rajesh Kumar, Arvind Singh]
+
+### Rooms for gh1 — Raipur (layout 4 cols × 3 rows per floor):
+Floor 1: 101 Single(0,0)available, 102 Double(1,0)occupied, 103 Suite(2,0)maintenance,
+         104 Single(3,0)available, 105 Double(0,1)booked, 106 Single(1,1)available
+Floor 2: 201 Double(0,0)occupied, 202 Single(1,0)available, 203 Suite(2,0)booked,
+         204 Single(3,0)available, 205 Double(0,1)available, 206 Double(1,1)occupied
+Floor 3: 301 Suite(0,0)available, 302 Single(1,0)pending_approval, 303 Double(2,0)maintenance,
+         304 Single(3,0)available, 305 Double(0,1)occupied, 306 Single(1,1)available
+
+### Bookings (8):
+1. BK001, guests:[Rahul Sharma 9811111111 TechCorp, Anita Roy 9822222222 TechCorp],
+   rooms:[102,201], allocations:[Rahul→102, Anita→201],
+   checkin: Apr 1 2PM, checkout: Apr 3 11AM, status: checked_in,
+   pickup: YES from "Raipur Airport" at Apr 1 12:00 PM,
+   drop: YES to "Raipur Airport" on Apr 3 12:00 PM,
+   purpose: "Project site visit", email_sent: true
+
+2. BK002, guests:[Vikram Rao 9833333333 HCL],
+   rooms:[105], allocations:[Vikram→105],
+   checkin: Apr 2 2PM, checkout: Apr 5 11AM, status: confirmed,
+   pickup: NO, drop: NO,
+   purpose: "Client meeting", email_sent: true
+
+3. BK003, guests:[Priya Nair 9844444444 Wipro, Sunita Desai 9855555555 Wipro, Arjun Singh 9866666666 Wipro],
+   rooms:[302, 203, 206], allocations:[Priya→302, Sunita→203, Arjun→206],
+   checkin: Apr 4 2PM, checkout: Apr 7 11AM, status: pending,
+   pending_expires_at: "4 hours from now",
+   pickup: YES from "Raipur Station" at Apr 4 12:00 PM,
+   drop: NO, purpose: "Training batch", email_sent: false
+
+4. BK004, guests:[Deepak Kumar 9877777777 BPCL],
+   rooms:[305], allocations:[Deepak→305],
+   checkin: Mar 31 2PM, checkout: Apr 2 11AM, status: checked_in,
+   pickup: NO, drop: YES to "Raipur Bus Stand" on Apr 2 12:00 PM,
+   purpose: "Audit visit", email_sent: true
+
+5. BK005, guests:[Meera Patel 9888888888 TCS],
+   rooms:[203], allocations:[Meera→203],
+   checkin: Mar 29, checkout: Mar 31, status: completed,
+   pickup: NO, drop: NO, purpose: "Review meeting", email_sent: true
+
+6. BK006, guests:[Ravi Shankar 9899999999 NTPC, Kavya Reddy 9800000000 NTPC],
+   rooms:[], allocations:[],
+   checkin: Apr 6, checkout: Apr 8, status: rejected,
+   rejection_reason: "No rooms available for requested dates",
+   pickup: NO, drop: NO, purpose: "Inspection", email_sent: false
+
+7. BK007, guests:[Suresh Mehta 9811122233 InfoSys],
+   rooms:[206], allocations:[Suresh→206],
+   checkin: Apr 1, checkout: Apr 3, status: checked_in,
+   pickup: NO, drop: NO, purpose: "Deployment", email_sent: true
+
+8. BK008, guests:[Neha Gupta 9822233344 Accenture],
+   rooms:[], allocations:[],
+   status: cancelled, pickup: NO, drop: NO,
+   cancellation_reason: "Guest cancelled trip"
+
+### Maintenance Tickets (5):
+1. TK001, Room 103, Electrical, High, "AC circuit trip", open, Apr 1
+2. TK002, Room 303, Plumbing, Medium, "Bathroom tap leaking", in_progress, Apr 2
+3. TK003, Room 201, Furniture, Low, "Chair leg broken", resolved, Apr 1, 4hrs, "Replaced chair"
+4. TK004, Room 104, AC/HVAC, High, "AC not cooling", resolved, Mar 30, 6hrs, "Gas refilled"
+5. TK005, Room 202, Appliances, Medium, "TV remote not working", resolved, Mar 29, 1hr, "Remote replaced"
+
+---
+
+## AUTH & ROUTING
+
+Single login page. Two tabs: "Super Admin" and "Manager".
+
+Super Admin: admin@bharatinfra.com / admin123
+Manager: manager@bharatinfra.com / manager123 (logs in as Rajesh Kumar — assigned to gh1 and gh3)
+
+Store auth in localStorage. Protect all routes. Logout button in sidebar footer.
+
+Manager sees a GUEST HOUSE SWITCHER in the sidebar header — a dropdown showing all their assigned guest houses. Switching guest house re-scopes all data to that guest house. Default to first assigned GH on login.
+
+---
+
+## SUPER ADMIN PORTAL
+
+Sidebar: Dashboard · Guest Houses · Managers · Room Layout Builder · Pending Approvals · Reports · Settings
+
+---
+
+### ADMIN — DASHBOARD
+
+Top 4 stat cards:
+- Total Guest Houses
+- Total Managers
+- Total Rooms (across all GHs)
+- Pending Approvals (red badge if > 0)
+
+PENDING BOOKING REQUESTS section (most important widget):
+Card list — one card per pending booking showing:
+- Booking ref (BK003 etc.)
+- Guest house name + manager name
+- Number of guests (e.g. "3 guests")
+- Room numbers requested (e.g. "Rooms 302, 203, 206")
+- Check-in → Check-out dates
+- Purpose of visit
+- Countdown timer: "Expires in 3h 42m" (amber, urgent red if < 30 min)
+- Expandable section "View Guest Details" → shows full guest list with name, phone, company, allocated room
+- Pickup/Drop info if applicable
+- Two action buttons: "Approve" (green) and "Reject" (red)
+
+APPROVE action: instantly confirms booking, all rooms → Booked, trigger mock email to all guests, show toast "Booking BK003 approved. Confirmation emails sent to 3 guests."
+
+REJECT action: opens modal with:
+- "Rejection Reason" textarea (required, min 10 chars)
+- "Confirm Rejection" red button
+On reject: booking → Rejected, all rooms → Available, manager gets in-app notification with reason.
+
+All Guest Houses summary table below: Name, City, Managers (comma list), Rooms, Active Bookings, Occupancy %.
+
+---
+
+### ADMIN — GUEST HOUSES PAGE
+
+Grid of guest house cards (3 per row).
+Each card: GH name, city, address, floors, total rooms, assigned managers (avatar chips, multiple), Active/Inactive toggle, Edit and View Layout buttons.
+
+"Add Guest House" button top right → modal:
+Fields:
+1. Guest House Name*
+2. City*
+3. Full Address*
+4. Number of Floors* (1–10)
+5. Total Capacity
+6. Assign Managers* — multi-select dropdown (checkboxes)
+   Each option: manager name + employee ID + current assignments count
+   e.g. "Rajesh Kumar · EMP001 · 2 GHs assigned"
+   No limit — admin can assign one manager to many GHs
+7. Status toggle (Active default)
+
+On submit: create GH, update all selected managers' assignment lists.
+
+EDIT modal: same fields pre-filled. Manager assignment section shows current assigned managers as removable chips + "Add More" button.
+
+---
+
+### ADMIN — MANAGERS PAGE
+
+Search bar + "Add Manager" button.
+
+Table: Avatar · Full Name · Employee ID · Email · Phone · Assigned Guest Houses (comma-separated names or "Unassigned" amber) · Status · Actions (Edit · Manage Assignments · Deactivate)
+
+"Add Manager" modal:
+1. Full Name*
+2. Employee ID*
+3. Work Email*
+4. Phone*
+5. Assign to Guest Houses — multi-select dropdown (can select 0 or many)
+6. Temporary Password — auto-generated, read-only, copy button
+7. Send Credentials Email toggle (mocked — shows toast "Credentials email sent to [email]")
+
+"Manage Assignments" modal (separate from edit):
+Shows current assignments as removable chips.
+"Add Guest House" dropdown to assign more.
+No limit on assignments.
+On save: update assignments.
+
+---
+
+### ADMIN — ROOM LAYOUT BUILDER
+
+Step 1: Select Guest House dropdown.
+Step 2: Floor tabs (dynamic).
+Step 3: Two-panel layout.
+
+Left (65%): 4×3 grid.
+- Empty cell: dashed border, "+" centered, click to select
+- Placed room: colored card (room number bold, type small, status dot)
+- Selected empty cell: blue highlight border
+
+Right (35%): "Room Details" form
+- Room Number* (text)
+- Room Type* (radio: Single / Double / Suite)
+- Amenities (checkboxes: AC, WiFi, TV, Kitchen, Geyser)
+- Place Room / Update Room / Remove Room buttons
+
+"Save Layout" button bottom → console.log JSON + success toast.
+
+Room card colors in grid follow status color system defined above.
+
+---
+
+### ADMIN — PENDING APPROVALS PAGE
+
+Full page version of the pending requests widget from dashboard.
+Same cards but with more detail shown by default (no expand needed).
+Filter: All Pending · Expiring Soon (< 1 hr) · All Time
+
+Each card fully expanded showing:
+- Booking ref, GH name, manager name, submitted time
+- Guest table: Name, Phone, Company, Allocated Room
+- Dates: Check-in date+time, Check-out date+time, Total nights
+- Purpose of visit
+- Pickup: Yes/No — if yes show location + time
+- Drop: Yes/No — if yes show location + time
+- Countdown timer
+- Approve + Reject buttons
+
+---
+
+### ADMIN — REPORTS PAGE
+
+Date range filter + Generate button.
+
+Tabs: Overview · Occupancy · Maintenance · Bookings
+
+OVERVIEW: stats cards + bar chart (recharts) bookings per GH per month (6 months).
+
+OCCUPANCY: bar chart occupancy % per room. Table: GH, Room, Type, Booked Days, Available Days, Occ%.
+
+MAINTENANCE: donut chart by category. Table: GH, Room, Category, Priority, Reported, Resolved, Resolution Time.
+
+BOOKINGS: Table with all bookings across all GHs: Ref, GH, Manager, Guests, Rooms, Check-in, Check-out, Status.
+
+Download Excel + Download PDF buttons per tab (mock toast).
+
+---
+
+### ADMIN — SETTINGS PAGE
+
+Card form:
+- Company Name
+- Default Check-in Time (time picker)
+- Default Check-out Time (time picker)
+- Cleaning Buffer Duration (number + "minutes")
+- Booking Approval Expiry (number + "hours", default 4)
+- SMTP From Email (text input, e.g. noreply@bharatinfra.com)
+- SMTP Host (text input)
+- SMTP Port (number)
+- SMTP Username (text)
+- SMTP Password (password input, show/hide toggle)
+- "Test SMTP Connection" button → mock toast "SMTP connection successful"
+- "Save Settings" button
+
+---
+
+## MANAGER PORTAL
+
+Sidebar: Dashboard · Room Grid · New Booking · Bookings · Maintenance · Reports
+
+GUEST HOUSE SWITCHER in sidebar header below logo:
+- Shows current GH name in small text
+- Dropdown arrow → shows all assigned GHs
+- Clicking a GH switches context — all pages re-render for that GH
+- Active GH highlighted in dropdown
+
+All data and actions scoped to currently selected GH.
+
+---
+
+### MANAGER — DASHBOARD
+
+Top 4 stat cards:
+- Available Rooms (green)
+- Occupied Rooms (purple)
+- Pending Approval (amber)
+- Under Maintenance (red)
+
+"Today's Schedule" — two columns:
+Left: Check-ins today — guest name(s), booking ref, room(s), scheduled time, "Check In" button
+Right: Check-outs today — guest name(s), booking ref, room(s), scheduled time, "Check Out" button
+
+"Pickup & Drop Today" section:
+List of today's pickups and drops. Each item:
+- Type badge: PICKUP (blue) or DROP (amber)
+- Guest name(s)
+- Location
+- Time
+- Room number(s)
+- Booking ref
+
+"Open Maintenance Issues" — compact list of open + in_progress tickets for this GH.
+
+---
+
+### MANAGER — ROOM GRID PAGE
+
+Floor tabs (Floor 1, Floor 2, Floor 3).
+Filter pills: All · Available · Pending Approval · Booked · Occupied · Maintenance
+Count badges next to each filter.
+
+4-column CSS grid. Rooms at grid_x, grid_y positions.
+
+Room card per status (use exact hex colors from design system):
+- Available: green tint, clickable
+- Pending Approval: amber/yellow tint, show "Pending" label, NOT clickable, no action on click
+- Booked: blue tint, show primary guest name + check-in date
+- Occupied: purple tint, show primary guest name + check-out date
+- Maintenance: red tint, show issue category
+
+Room card always shows: room number (bold 16px), type (12px muted), status dot (top right 8px), status-specific info below.
+
+Pending Approval rooms: show a small lock icon + "Awaiting admin approval" tooltip on hover. Clicking does nothing (cursor: not-allowed).
+
+Clicking Available / Booked / Occupied / Maintenance room → opens RIGHT SIDE DRAWER (380px, slides from right):
+
+Drawer sections:
+
+ROOM INFO header: Room [num] · [type] · Floor [n]
+Amenities row: small pill badges
+
+IF AVAILABLE:
+  "No active booking"
+  "Create Booking for this Room" → navigates to New Booking with this room pre-added
+
+IF BOOKED:
+  Booking ref card
+  Guest list: each guest row showing name, phone, company, allocated room
+  Check-in: date + time | Check-out: date + time | Nights: X
+  Purpose of visit
+  Pickup info (if any): location + time
+  Drop info (if any): location + time
+  "Check In All Guests" green button → confirm modal → all rooms in this booking → Occupied
+  "Cancel Booking" red outlined → confirm modal → booking cancelled, rooms → Available
+
+IF OCCUPIED:
+  Same guest + booking info
+  Actual check-in timestamp
+  "Check Out All Guests" amber button → confirm modal → booking → Completed, rooms → Maintenance (post-checkout cleaning), auto-create maintenance ticket category "Post-checkout Cleaning"
+  "Report Issue" secondary button → opens Report Issue modal for this room
+
+IF MAINTENANCE:
+  Ticket details: category, priority, description, reported date
+  "Mark In Progress" (if open) or "Mark Resolved" (opens resolution modal)
+
+---
+
+### MANAGER — NEW BOOKING PAGE
+
+Two-column layout (desktop), stacked (mobile).
+
+Left column — GUEST INFORMATION:
+
+Number of Guests* (number input, min 1, max 20)
+→ When changed, dynamically render that many guest input rows below.
+
+Guest rows (repeated per guest):
+Each row: Guest # label, Full Name*, Phone*, Email (optional), Company/Dept (optional)
+Add/remove guest rows with + and × buttons.
+
+Right column — ROOMS & SCHEDULE:
+
+Check-in Date* + Check-in Time* (default 14:00 from settings)
+Check-out Date* + Check-out Time* (default 11:00 from settings)
+Duration display: auto-calculated "X nights"
+
+Select Rooms* — multi-select room picker:
+Show only Available rooms for current GH.
+Each room option: Room number · Type · Floor (e.g. "Room 101 · Single · Floor 1")
+Can select multiple rooms.
+Selected rooms shown as removable chips below.
+Pending / Booked / Occupied / Maintenance rooms are NOT shown here.
+
+CONFLICT CHECK (live, triggers on date/time/room change):
+For each selected room check mock bookings for overlap.
+Show status box:
+- Green: "✓ All selected rooms are available for these dates"
+- Red: "✗ Room 102 conflicts — occupied Apr 1–3. Remove it or change dates."
+- Amber: "⚠ Room 203 has cleaning buffer until Apr 3 12:00"
+
+GUEST TO ROOM ALLOCATION section (appears after rooms are selected):
+Shows a table/grid:
+Rows = guests (from left column)
+Column = "Assigned Room" dropdown (shows only selected rooms)
+Each guest must be assigned exactly one room.
+A room can be assigned to multiple guests (e.g. double room for 2 people).
+Validation: every guest must have a room assigned before submit.
+
+PICKUP & DROP FACILITY section:
+
+PICKUP toggle (Yes/No):
+  If Yes → show fields:
+  - Pickup Location* (text, e.g. "Raipur Airport")
+  - Pickup Date* (date picker)
+  - Pickup Time* (time picker)
+  - Vehicle Type (dropdown: Car / Van / Bus / Auto-arrange)
+  - Notes (text, optional)
+
+DROP toggle (Yes/No):
+  If Yes → show fields:
+  - Drop Location* (text)
+  - Drop Date* (date picker)
+  - Drop Time* (time picker)
+  - Vehicle Type (dropdown same as above)
+  - Notes (text, optional)
+
+PURPOSE OF VISIT (text input, optional)
+ADDITIONAL NOTES (textarea, optional)
+
+Bottom sticky bar:
+"Cancel" secondary + "Submit for Approval" primary button
+
+Validation on submit:
+1. All guest names + phones filled
+2. At least one room selected
+3. No conflict on any selected room
+4. Every guest assigned to a room
+5. No guest assigned twice to different rooms (one room each)
+6. Check-out date is after check-in date
+7. If pickup Yes → location + date + time filled
+8. If drop Yes → location + date + time filled
+
+ON VALID SUBMIT:
+- Create booking with status: pending
+- All selected rooms → status: pending_approval
+- Store pending_expires_at = now + 4 hours (from settings)
+- Show success page (not toast) with:
+  "Booking Request Submitted"
+  Booking ref number
+  "Awaiting admin approval. Rooms are temporarily reserved."
+  "Expires in: 4:00:00" (countdown)
+  "Back to Room Grid" button
+
+---
+
+### MANAGER — BOOKINGS PAGE
+
+Search bar (filter by guest name, booking ref, room) + "New Booking" button top right.
+
+Tabs: All · Pending · Confirmed · Checked In · Completed · Rejected · Cancelled
+
+Table columns:
+Ref · Guests (count + primary name) · Rooms · Check-in · Check-out · Nights · Status badge · Actions
+
+PENDING rows:
+- Amber status badge
+- Countdown timer in Actions column: "3h 42m remaining"
+- "Cancel" icon button only (manager can cancel before admin acts)
+- No Approve/Reject (that's admin only)
+
+CONFIRMED rows:
+- "Check In" green button
+- "Cancel" red icon
+
+CHECKED IN rows:
+- "Check Out" amber button
+
+COMPLETED / REJECTED / CANCELLED rows:
+- "View" eye icon only
+
+Clicking any row → expands inline to show:
+- Full guest list (name, phone, company, allocated room)
+- All dates and times
+- Pickup details (if any) with vehicle type
+- Drop details (if any) with vehicle type
+- Purpose, notes
+- If Rejected: show rejection reason in red alert box "Rejected by Admin: [reason]"
+- If Cancelled: show cancellation reason
+- Email status: "Confirmation email sent ✓" or "Email not sent (pending approval)"
+
+CHECK IN action:
+Confirm modal: "Check in [X] guests to rooms [list]?"
+On confirm: booking → checked_in, all rooms → occupied, actual_checkin = now()
+Toast: "Check-in complete for [X] guests"
+
+CHECK OUT action:
+Confirm modal: "Check out all guests from rooms [list]?"
+On confirm: booking → completed, all rooms → maintenance, actual_checkout = now()
+Auto-create post-checkout cleaning ticket for each room
+Toast: "Checkout complete. Rooms marked for post-checkout cleaning."
+
+---
+
+### MANAGER — MAINTENANCE PAGE
+
+Top row: "Mark Room for Maintenance" primary button (right-aligned)
+
+Filter row: Status tabs (All · Open · In Progress · Resolved) + Category dropdown + Priority filter
+
+Stats row (4 cards): Open · In Progress · Resolved This Month · Avg Resolution Time (hrs)
+
+TICKET CARDS — each card shows:
+Room number + floor (bold) | Category badge | Priority badge | Description (2 lines) | Reported time | Status + action buttons
+
+Category badge colors:
+Electrical=amber, Plumbing=blue, AC/HVAC=teal, Furniture=gray,
+Post-checkout Cleaning=green, Pest Control=red, Appliances=purple, Other=gray
+
+Action buttons:
+- Open → "Start Work" → status: in_progress
+- In Progress → "Mark Resolved" → modal:
+  Resolution Note* (textarea required)
+  On resolve: ticket → resolved, if room was in Maintenance → room → Available
+  Toast: "Room [num] is now available for booking"
+
+"MARK ROOM FOR MAINTENANCE" modal:
+1. Select Room* — dropdown ALL rooms, show current status next to name
+   Warning if room is Occupied: "⚠ Room is occupied. Flag will apply after checkout."
+2. Category* — dropdown: Electrical / Plumbing / AC/HVAC / Furniture / Pest Control / Appliances / Other
+3. Priority* — radio: Low · Medium · High
+4. Description* (textarea)
+5. Block room from bookings toggle (ON by default)
+   "When ON, room status → Maintenance immediately. Cannot be booked until resolved."
+
+On submit:
+- Create ticket
+- If toggle ON → room status → Maintenance
+- Toast: "Room [num] marked for maintenance and blocked from new bookings"
+
+POST-CHECKOUT CLEANING tickets (auto-created on checkout):
+- Category: "Post-checkout Cleaning"
+- Priority: Low
+- Description: "Post-checkout cleaning required."
+- Room stays Maintenance until this ticket is resolved
+- Manager resolves → room → Available
+
+---
+
+### MANAGER — REPORTS PAGE
+
+Date range picker (From → To) + "Generate" button.
+
+Tabs: Booking Report · Occupancy Report · Maintenance Report · Summary
+
+BOOKING REPORT:
+Summary cards: Total Bookings · Total Guest Nights · Unique Guests
+Table: Ref · Guests · Rooms · Check-in · Check-out · Nights · Purpose · Pickup · Drop · Status
+"Download Excel" + "Download PDF" (mock toast "Report downloaded")
+
+OCCUPANCY REPORT:
+Metric card: Occupancy % for period
+Bar chart (recharts): % per room
+Table: Room · Type · Floor · Booked Days · Available Days · Occ%
+Download buttons
+
+MAINTENANCE REPORT:
+Cards: Total Tickets · Avg Resolution (hrs) · Open Issues
+Donut chart: by category
+Table: Room · Category · Priority · Reported · Resolved · Time (hrs) · Note
+Download buttons
+
+SUMMARY TAB:
+All 3 reports compact on one page, print-friendly layout.
+"Download Full Report" PDF (mock toast)
+
+---
+
+## EMAIL SIMULATION (SMTP Mock)
+
+When a booking is APPROVED by admin:
+Show toast: "Sending confirmation emails..."
+After 1.5 second delay show: "✓ Confirmation email sent to [guest1 email], [guest2 email]..."
+
+Email content preview (show in a modal if "Preview Email" button clicked on booking detail):
+Subject: "Booking Confirmation — [GH Name] | Ref: [BK###]"
+Body preview card showing:
+- Guest name
+- Guest house name + address
+- Room number + type
+- Check-in date + time
+- Check-out date + time
+- Pickup details (if applicable): "Pickup arranged from [location] at [time]. Vehicle: [type]"
+- Drop details (if applicable): "Drop arranged to [location] at [time]. Vehicle: [type]"
+- Contact: Manager name + phone
+- Footer: "Sent by Bharat Infra Corp Guest House Management System"
+
+When a booking is REJECTED:
+Show toast: "Rejection notification sent to manager."
+(No email to guest — manager calls them back manually)
+
+---
+
+## IMPORTANT RULES
+
+1. Manager sees only their assigned guest houses via the GH switcher — no other data visible.
+2. Admin can assign multiple guest houses to one manager — no limit.
+3. Pending Approval rooms are NOT clickable in Room Grid, NOT shown in New Booking room dropdown.
+4. Booking submission always goes to Pending first — admin must approve.
+5. No partial approval — all rooms in a booking are approved or rejected together.
+6. On rejection: all rooms return to Available immediately.
+7. On approval: all rooms flip to Booked + confirmation email mock sent to all guests.
+8. Rejection always requires a reason — no reason = submit button disabled.
+9. Manager CAN cancel a Pending booking themselves (e.g. guest changed mind before admin acted).
+10. Cancelling pending booking → all rooms → Available immediately.
+11. Check-in and Check-out are per-booking (all guests/rooms at once).
+12. Post-checkout cleaning auto-creates a Maintenance ticket — resolved by manager when cleaning is done.
+13. Pickup and Drop are recorded per booking — shown on manager dashboard "today" section.
+14. Email is SMTP-based but fully mocked in UI — no real API call needed.
+15. All reports scoped to selected guest house for manager, all GHs for admin.
+16. Expiry timer display should count down live (JS setInterval) from pending_expires_at.
+17. When timer hits 0: booking → Rejected (reason: "Auto-rejected: approval window expired"), rooms → Available, show toast to manager.
+
+---
+
+## FINAL VALIDATION RULES (New Booking)
+
+- All guest names + phones required
+- At least 1 room selected
+- No room conflict (check against existing confirmed/checked_in/pending bookings)
+- All guests must be assigned a room (no unassigned guest)
+- Check-out must be after check-in
+- If pickup enabled: location + date + time required
+- If drop enabled: location + date + time required
+- Disable "Submit for Approval" button until all validations pass
+- Show inline error messages per field, not just a single alert
