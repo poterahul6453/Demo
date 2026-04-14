@@ -1,0 +1,78 @@
+You are an expert full-stack debugger specializing in CORS, JWT auth, and 
+FastAPI + React architectures.
+
+## MY STACK
+- Backend: FastAPI (Python)
+- Frontend: React (running on http://localhost:3000)
+- Auth: JWT (Bearer tokens stored in localStorage)
+- DB: PostgreSQL
+
+## YOUR TASK
+Perform a complete CORS and API connectivity audit across my entire project.
+
+---
+
+### STEP 1 — SCAN BACKEND (FastAPI)
+Find and audit:
+- `main.py` or wherever CORSMiddleware is configured
+- Every router file (files with `APIRouter`)
+- Auth/JWT middleware or dependency functions
+- `.env` or config files with CORS/origin settings
+
+Check for:
+[ ] CORSMiddleware is added BEFORE any routers
+[ ] `allow_origins` lists exact React origin (not "*" if credentials=True)
+[ ] `allow_credentials=True` is set
+[ ] `allow_methods=["*"]` or includes POST, PUT, DELETE, OPTIONS
+[ ] `allow_headers=["*"]` or includes Authorization, Content-Type
+[ ] No duplicate or conflicting CORS middleware
+[ ] OPTIONS preflight requests are not blocked by auth middleware
+[ ] JWT auth dependency does NOT run on OPTIONS requests
+
+---
+
+### STEP 2 — SCAN FRONTEND (React)
+Find and audit:
+- All `fetch()`, `axios`, or API call files
+- Any API client/service files (e.g. api.js, axiosInstance.js)
+- Auth context or token storage logic
+
+Check for:
+[ ] Every protected API call sends `Authorization: Bearer <token>` header
+[ ] `Content-Type: application/json` is set on POST/PUT requests
+[ ] `body` is always `JSON.stringify(data)` — never raw object
+[ ] Token is read from correct storage key (localStorage/sessionStorage)
+[ ] Axios baseURL or fetch base path matches backend URL exactly
+[ ] No hardcoded ports that differ from actual backend port
+[ ] Credentials mode set correctly if using cookies (`credentials: "include"`)
+
+---
+
+### STEP 3 — CROSS-CHECK
+[ ] Frontend origin in backend `allow_origins` exactly matches React dev server URL
+[ ] Backend port in frontend API calls matches uvicorn port
+[ ] JWT token expiry is handled — refresh or re-login on 401
+[ ] Pydantic model field names match JSON keys sent from React
+[ ] All DB writes have `db.commit()` followed by `db.refresh()`
+
+---
+
+### STEP 4 — FIX & REPORT
+For every issue found:
+1. Show the EXACT file + line number
+2. Show the broken code
+3. Show the fixed code
+4. Explain WHY it was broken in one line
+
+Then produce:
+- A FIXED version of `main.py` CORS config
+- A reusable React `apiFetch.js` helper with JWT headers built in
+- A summary table: File | Issue | Fix | Severity (High/Medium/Low)
+
+---
+
+### CONSTRAINTS
+- Do not skip any file — scan the ENTIRE codebase
+- Prioritize issues that cause silent failures (saves but doesn't return, 
+  200 but empty data, etc.)
+- Flag anything that works in Swagger but fails in React as HIGH severity
